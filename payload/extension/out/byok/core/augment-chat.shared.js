@@ -2,6 +2,7 @@
 
 const { normalizeString } = require("../infra/util");
 const { RESPONSE_NODE_RAW_RESPONSE, RESPONSE_NODE_MAIN_TEXT_FINISHED, RESPONSE_NODE_TOOL_USE, RESPONSE_NODE_TOOL_USE_START } = require("./augment-protocol");
+const { compactAugmentChatHistory } = require("./augment-history-summary");
 
 function asRecord(v) {
   return v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -101,6 +102,7 @@ function normalizeNodeType(node) {
 
 function normalizeChatHistoryItem(raw) {
   const r = asRecord(raw);
+  const request_id = asString(pick(r, ["request_id", "requestId", "requestID", "id"]));
   const request_message = asString(pick(r, ["request_message", "requestMessage", "message"]));
   const response_text = asString(pick(r, ["response_text", "responseText", "response", "text"]));
   const request_nodes = asArray(pick(r, ["request_nodes", "requestNodes"]));
@@ -108,13 +110,15 @@ function normalizeChatHistoryItem(raw) {
   const nodes = asArray(pick(r, ["nodes"]));
   const response_nodes = asArray(pick(r, ["response_nodes", "responseNodes"]));
   const structured_output_nodes = asArray(pick(r, ["structured_output_nodes", "structuredOutputNodes"]));
-  return { request_message, response_text, request_nodes, structured_request_nodes, nodes, response_nodes, structured_output_nodes };
+  return { request_id, request_message, response_text, request_nodes, structured_request_nodes, nodes, response_nodes, structured_output_nodes };
 }
 
 function normalizeAugmentChatRequest(body) {
   const b = asRecord(body);
   const message = asString(pick(b, ["message", "prompt", "instruction"]));
+  const conversation_id = asString(pick(b, ["conversation_id", "conversationId", "conversationID"]));
   const chat_history = asArray(pick(b, ["chat_history", "chatHistory"])).map(normalizeChatHistoryItem);
+  compactAugmentChatHistory(chat_history);
   const tool_definitions = asArray(pick(b, ["tool_definitions", "toolDefinitions"]));
   const nodes = asArray(pick(b, ["nodes"]));
   const structured_request_nodes = asArray(pick(b, ["structured_request_nodes", "structuredRequestNodes"]));
@@ -129,7 +133,7 @@ function normalizeAugmentChatRequest(body) {
   const workspace_guidelines = asString(pick(b, ["workspace_guidelines", "workspaceGuidelines"]));
   const rules = pick(b, ["rules"]);
   const feature_detection_flags = asRecord(pick(b, ["feature_detection_flags", "featureDetectionFlags"]));
-  return { message, chat_history, tool_definitions, nodes, structured_request_nodes, request_nodes, agent_memories, mode, prefix, suffix, lang, path, user_guidelines, workspace_guidelines, rules, feature_detection_flags };
+  return { message, conversation_id, chat_history, tool_definitions, nodes, structured_request_nodes, request_nodes, agent_memories, mode, prefix, suffix, lang, path, user_guidelines, workspace_guidelines, rules, feature_detection_flags };
 }
 
 function coerceRulesText(rules) {

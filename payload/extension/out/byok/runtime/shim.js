@@ -10,13 +10,13 @@ const { anthropicCompleteText, anthropicStreamTextDeltas, anthropicChatStreamChu
 const { joinBaseUrl, safeFetch, readTextLimit } = require("../providers/http");
 const { getOfficialConnection } = require("../config/official");
 const { normalizeAugmentChatRequest, buildSystemPrompt, convertOpenAiTools, convertAnthropicTools, buildToolMetaByName, buildOpenAiMessages, buildAnthropicMessages } = require("../core/augment-chat");
+const { maybeSummarizeAndCompactAugmentChatRequest } = require("../core/augment-history-summary-auto");
 const { STOP_REASON_END_TURN, makeBackChatChunk } = require("../core/augment-protocol");
 const {
   buildMessagesForEndpoint,
   makeBackTextResult,
   makeBackChatResult,
   makeBackCompletionResult,
-  makeBackGenerateCommitMessageChunk,
   makeBackNextEditGenerationChunk,
   makeBackNextEditLocationResult,
   buildByokModelsFromConfig,
@@ -146,7 +146,7 @@ async function* byokStreamText({ provider, model, system, messages, timeoutMs, a
   throw new Error(`未知 provider.type: ${type}`);
 }
 
-async function* byokChatStream({ provider, model, body, timeoutMs, abortSignal }) {
+async function* byokChatStream({ cfg, provider, model, requestedModel, body, timeoutMs, abortSignal }) {
   const { type, baseUrl, apiKey, extraHeaders, requestDefaults } = providerRequestContext(provider);
   const req = normalizeAugmentChatRequest(body);
   const msg = normalizeString(req.message);
@@ -156,6 +156,11 @@ async function* byokChatStream({ provider, model, body, timeoutMs, abortSignal }
   if (!msg && !hasNodes && !hasHistory && !hasReqNodes) {
     yield makeBackChatChunk({ text: "", stop_reason: STOP_REASON_END_TURN });
     return;
+  }
+  try {
+    await maybeSummarizeAndCompactAugmentChatRequest({ cfg, req, requestedModel, fallbackProvider: provider, fallbackModel: model, timeoutMs, abortSignal });
+  } catch (err) {
+    warn(`historySummary failed (ignored): ${err instanceof Error ? err.message : String(err)}`);
   }
   const toolMetaByName = buildToolMetaByName(req.tool_definitions);
   const fdf = req && typeof req === "object" && req.feature_detection_flags && typeof req.feature_detection_flags === "object" ? req.feature_detection_flags : {};
@@ -183,7 +188,7 @@ async function fetchOfficialGetModels({ completionURL, apiToken, timeoutMs, abor
   return json;
 }
 
-function mergeModels(upstreamJson, byokModelNames) {
+function mergeModels(upstreamJson, byokModelNames, opts) {
   const base = upstreamJson && typeof upstreamJson === "object" ? upstreamJson : {};
   const models = Array.isArray(base.models) ? base.models.slice() : [];
   const existing = new Set(models.map((m) => (m && typeof m.name === "string" ? m.name : "")).filter(Boolean));
@@ -192,9 +197,11 @@ function mergeModels(upstreamJson, byokModelNames) {
     models.push(makeModelInfo(name));
     existing.add(name);
   }
-  const defaultModel = typeof base.default_model === "string" && base.default_model ? base.default_model : (models[0]?.name || "unknown");
+  const baseDefaultModel = typeof base.default_model === "string" && base.default_model ? base.default_model : (models[0]?.name || "unknown");
   const baseFlags = base.feature_flags && typeof base.feature_flags === "object" && !Array.isArray(base.feature_flags) ? base.feature_flags : {};
-  const flags = ensureModelRegistryFeatureFlags(baseFlags, { byokModelIds: byokModelNames, defaultModel });
+  const preferredDefaultModel = normalizeString(opts?.defaultModel);
+  const defaultModel = preferredDefaultModel || baseDefaultModel;
+  const flags = ensureModelRegistryFeatureFlags(baseFlags, { byokModelIds: byokModelNames, defaultModel, agentChatModel: defaultModel });
   return { ...base, default_model: defaultModel, models, feature_flags: flags };
 }
 
@@ -224,16 +231,22 @@ async function maybeHandleCallApi({ endpoint, body, transform, timeoutMs, abortS
 
   if (ep === "/get-models") {
     const byokModels = buildByokModelsFromConfig(cfg);
+    const byokDefaultModel = byokModels.length ? byokModels[0] : "";
+    const activeProviderId = normalizeString(cfg?.routing?.defaultProviderId) || normalizeString(cfg?.providers?.[0]?.id);
+    const activeProvider = Array.isArray(cfg?.providers) ? cfg.providers.find((p) => p && normalizeString(p.id) === activeProviderId) : null;
+    const activeProviderDefaultModel = normalizeString(activeProvider?.defaultModel) || normalizeString(activeProvider?.models?.[0]);
+    const preferredByok = activeProviderId && activeProviderDefaultModel ? `byok:${activeProviderId}:${activeProviderDefaultModel}` : "";
+    const preferredDefaultModel = byokModels.includes(preferredByok) ? preferredByok : byokDefaultModel;
     try {
       const off = getOfficialConnection();
       const completionURL = off.completionURL;
       const apiToken = normalizeString(upstreamApiToken) || off.apiToken;
       const upstream = await fetchOfficialGetModels({ completionURL, apiToken, timeoutMs: Math.min(12000, t), abortSignal });
-      const merged = mergeModels(upstream, byokModels);
+      const merged = mergeModels(upstream, byokModels, { defaultModel: preferredDefaultModel });
       return safeTransform(transform, merged, ep);
     } catch (err) {
       warn(`get-models fallback to local: ${err instanceof Error ? err.message : String(err)}`);
-      const local = makeBackGetModelsResult({ defaultModel: byokModels[0] || "unknown", models: byokModels.map(makeModelInfo) });
+      const local = makeBackGetModelsResult({ defaultModel: preferredDefaultModel || "unknown", models: byokModels.map(makeModelInfo) });
       return safeTransform(transform, local, ep);
     }
   }
@@ -282,7 +295,7 @@ async function maybeHandleCallApiStream({ endpoint, body, transform, timeoutMs, 
   if (isTelemetryDisabled(cfg, ep)) return emptyAsyncGenerator();
 
   if (ep === "/chat-stream") {
-    const src = byokChatStream({ provider: route.provider, model: route.model, body, timeoutMs: t, abortSignal });
+    const src = byokChatStream({ cfg, provider: route.provider, model: route.model, requestedModel: route.requestedModel, body, timeoutMs: t, abortSignal });
     return (async function* () { for await (const raw of src) yield safeTransform(transform, raw, ep); })();
   }
 
@@ -298,7 +311,7 @@ async function maybeHandleCallApiStream({ endpoint, body, transform, timeoutMs, 
     const { system, messages } = buildMessagesForEndpoint(ep, body);
     const src = byokStreamText({ provider: route.provider, model: route.model, system, messages, timeoutMs: t, abortSignal });
     return (async function* () {
-      for await (const delta of src) yield safeTransform(transform, makeBackTextResult(delta), ep);
+      for await (const delta of src) yield safeTransform(transform, { text: typeof delta === "string" ? delta : String(delta ?? "") }, ep);
     })();
   }
 
@@ -306,7 +319,7 @@ async function maybeHandleCallApiStream({ endpoint, body, transform, timeoutMs, 
     const { system, messages } = buildMessagesForEndpoint(ep, body);
     const src = byokStreamText({ provider: route.provider, model: route.model, system, messages, timeoutMs: t, abortSignal });
     return (async function* () {
-      for await (const delta of src) yield safeTransform(transform, makeBackGenerateCommitMessageChunk(delta), ep);
+      for await (const delta of src) yield safeTransform(transform, makeBackChatResult(delta, { nodes: [] }), ep);
     })();
   }
 

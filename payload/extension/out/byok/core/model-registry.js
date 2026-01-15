@@ -20,7 +20,7 @@ function pickFirstString(obj, keys) {
   return "";
 }
 
-function ensureModelRegistryFeatureFlags(existingFlags, { byokModelIds, defaultModel } = {}) {
+function ensureModelRegistryFeatureFlags(existingFlags, { byokModelIds, defaultModel, agentChatModel } = {}) {
   const dm = normalizeString(defaultModel) || "unknown";
   const flags =
     existingFlags && typeof existingFlags === "object" && !Array.isArray(existingFlags) ? { ...existingFlags } : {};
@@ -38,12 +38,12 @@ function ensureModelRegistryFeatureFlags(existingFlags, { byokModelIds, defaultM
 
   const registryJson = JSON.stringify(registry);
   const infoRegistryJson = JSON.stringify(infoRegistry);
-  const agentChatModel = pickFirstString(flags, ["agent_chat_model", "agentChatModel"]) || dm;
+  const acm = normalizeString(agentChatModel) || pickFirstString(flags, ["agent_chat_model", "agentChatModel"]) || dm;
 
   flags.additional_chat_models = registryJson;
   flags.additionalChatModels = registryJson;
-  flags.agent_chat_model = agentChatModel;
-  flags.agentChatModel = agentChatModel;
+  flags.agent_chat_model = acm;
+  flags.agentChatModel = acm;
   flags.enable_model_registry = true;
   flags.enableModelRegistry = true;
   flags.model_registry = registryJson;
@@ -52,6 +52,10 @@ function ensureModelRegistryFeatureFlags(existingFlags, { byokModelIds, defaultM
   flags.modelInfoRegistry = infoRegistryJson;
   flags.show_thinking_summary = true;
   flags.showThinkingSummary = true;
+
+  const fraudSign = typeof flags.fraud_sign_endpoints === "boolean" ? flags.fraud_sign_endpoints : typeof flags.fraudSignEndpoints === "boolean" ? flags.fraudSignEndpoints : false;
+  flags.fraud_sign_endpoints = fraudSign;
+  flags.fraudSignEndpoints = fraudSign;
 
   return flags;
 }

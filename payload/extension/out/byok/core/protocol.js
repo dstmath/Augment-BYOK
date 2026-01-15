@@ -52,10 +52,6 @@ function makeBackCompletionResult(text, { timeoutMs } = {}) {
   return out;
 }
 
-function makeBackGenerateCommitMessageChunk(text) {
-  return { text: coerceText(text) };
-}
-
 function makeBackNextEditGenerationChunk({ path, blobName, charStart, charEnd, existingCode, suggestedCode }) {
   const p = normalizeString(path) || "(unknown)";
   const b = normalizeString(blobName) || "(unknown)";
@@ -138,7 +134,6 @@ module.exports = {
   makeBackTextResult,
   makeBackChatResult,
   makeBackCompletionResult,
-  makeBackGenerateCommitMessageChunk,
   makeBackNextEditGenerationChunk,
   makeBackNextEditLocationResult,
   buildByokModelsFromConfig,

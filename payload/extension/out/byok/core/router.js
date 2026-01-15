@@ -17,8 +17,9 @@ function getRule(cfg, endpoint) {
 function pickProvider(cfg, providerId) {
   const list = Array.isArray(cfg?.providers) ? cfg.providers : [];
   const id = normalizeString(providerId);
-  const p = id ? list.find((x) => x && x.id === id) : null;
-  return p || (list.length ? list[0] : null);
+  if (!id) return list.length ? list[0] : null;
+  const p = list.find((x) => x && x.id === id);
+  return p || null;
 }
 
 function decideRoute({ cfg, endpoint, body, runtimeEnabled }) {
@@ -28,17 +29,17 @@ function decideRoute({ cfg, endpoint, body, runtimeEnabled }) {
   if (!cfg || cfg.enabled !== true) return { mode: "official", endpoint: ep, reason: "byok_disabled" };
 
   const rule = getRule(cfg, ep);
-  const mode = normalizeString(rule?.mode) || normalizeString(cfg?.routing?.defaultMode) || "official";
-  if (mode === "official" || mode === "disabled") return { mode, endpoint: ep, reason: "rule" };
-  if (mode !== "byok") return { mode: "official", endpoint: ep, reason: "unknown_mode" };
-
   const requestedModel = pickRequestedModel(body);
   const parsed = parseByokModelId(requestedModel, { strict: true });
+  const mode = normalizeString(rule?.mode) || normalizeString(cfg?.routing?.defaultMode) || "official";
+  if (mode === "disabled") return { mode, endpoint: ep, reason: "rule" };
+  if (mode === "official" && !parsed) return { mode, endpoint: ep, reason: "rule" };
+  if (mode !== "byok" && !parsed) return { mode: "official", endpoint: ep, reason: "unknown_mode" };
   const providerId = normalizeString(rule?.providerId) || parsed?.providerId || normalizeString(cfg?.routing?.defaultProviderId) || "";
   const provider = pickProvider(cfg, providerId);
   const parsedModel = parsed && normalizeString(parsed.providerId) === normalizeString(provider?.id) ? parsed.modelId : "";
   const model = normalizeString(rule?.model) || normalizeString(parsedModel) || normalizeString(provider?.defaultModel) || "";
-  return { mode: "byok", endpoint: ep, reason: "byok", provider, model, requestedModel };
+  return { mode: "byok", endpoint: ep, reason: parsed && mode !== "byok" ? "model_override" : "byok", provider, model, requestedModel };
 }
 
 module.exports = { decideRoute };
