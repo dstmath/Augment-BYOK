@@ -28,7 +28,21 @@
 - 上游会从 `completionUrl` 的**子域名**提取 `tenantId`（例如 `https://your-tenant.augmentcode.com/` → `your-tenant`）。
 - 如果你需要使用官方控制面能力（如 Preferences → Secrets Manager / Remote Agents），请确保 `official.completionUrl` 是你的 tenant URL；否则可能出现 `Not Found`。
 
-## 4) 模型与路由约定
+## 4) Official 上下文注入（强制开启，无需额外配置）
+
+为尽量贴近 Augment 原生体验，BYOK 在 `/chat` 与 `/chat-stream` 生成前，会尝试复用官方后端的 Context Engine 输出形态，并把结果注入到请求 `nodes`（`REQUEST_NODE_TEXT`）后再交给 BYOK provider 生成。
+
+注入链路包含三部分：
+- **Codebase retrieval**：调用官方 `agents/codebase-retrieval` 获取 `formatted_retrieval` 并注入。
+- **External sources**：若请求未禁用外部来源，会调用 `get-implicit-external-sources` 推断可用 source IDs，并用 `search-external-sources` 拉取可展示的外部来源摘要后注入。
+- **Context Canvas（canvasId）**：若请求包含 `canvas_id`/`canvasId`，会调用 `context-canvas/list` 尝试解析 canvas 的 `name/description` 并注入（用于尽量还原“选了某个 canvas”时的上下文提示）。
+
+行为约定：
+- **无需额外开关**：只要能拿到 Official `completionUrl` + `apiToken` 就自动启用；不可用时会自动跳过，不影响 BYOK 生成。
+- **按请求可禁用**：请求体里设置 `disableRetrieval=true`（或 `disable_retrieval=true`）会跳过上述所有注入。
+- **内置超时/长度**：默认 `max_output_length=20000`，检索注入超时上限约 `12000ms`（并受上游请求 timeout 的 50% 限制）。
+
+## 5) 模型与路由约定
 
 - BYOK 模型 ID 统一格式：`byok:<providerId>:<modelId>`
 - `routing.rules[endpoint].mode` 支持：`official` / `byok` / `disabled`（本地 no-op，不发网络请求）。
@@ -38,7 +52,7 @@
   3) 否则使用 `routing.defaultProviderId` + `providers[].defaultModel`
 - `/get-models` 会把 `providers[].models/defaultModel` 注入为 `byok:*`，让 Augment 的 Model Picker 可直接选择；同时必须返回 `feature_flags.enableModelRegistry/modelRegistry/modelInfoRegistry` 等字段，否则主面板模型选择入口会被隐藏。
 
-## 5) VS Code 命令（运维入口）
+## 6) VS Code 命令（运维入口）
 
 - `BYOK: Open Config Panel`：配置面板（Save/Reset/Export/Import/Enable/Disable）。
 - `BYOK: Reload Config`：从 `globalState` 重新加载（便于排查同步/异常）。

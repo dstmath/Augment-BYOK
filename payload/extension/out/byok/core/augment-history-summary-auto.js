@@ -351,13 +351,13 @@ function buildHistoryEnd(tail) {
 }
 
 function applySummaryToRequest({ hs, req, tail, summaryText, summarizationRequestId, abridged }) {
-  const template = hs.useHistorySummaryNew === true ? asString(hs.summaryNodeRequestMessageTemplateNew) : asString(hs.summaryNodeRequestMessageTemplate);
-  const historyEnd = hs.useHistorySummaryNew === true ? buildHistoryEnd(tail) : [];
+  const template = asString(hs.summaryNodeRequestMessageTemplate);
+  const historyEnd = buildHistoryEnd(tail);
   const summaryNode = { summary_text: summaryText, summarization_request_id: summarizationRequestId, history_beginning_dropped_num_exchanges: abridged.droppedBeginning, history_middle_abridged_text: abridged.text, history_end: historyEnd, message_template: template };
   const rendered = renderHistorySummaryNodeValue(summaryNode, []);
   if (!normalizeString(rendered)) return null;
   const summaryItem = { request_id: "byok_history_summary", request_message: "", response_text: "", request_nodes: [{ id: -10, type: REQUEST_NODE_TEXT, content: "", text_node: { content: rendered } }], structured_request_nodes: [], nodes: [], response_nodes: [], structured_output_nodes: [] };
-  const newHistory = hs.useHistorySummaryNew === true ? [summaryItem] : [summaryItem, ...tail];
+  const newHistory = [summaryItem];
   req.chat_history = newHistory;
   return newHistory;
 }
